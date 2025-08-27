@@ -5,10 +5,11 @@
   <title>Paper Digitiser</title>
   <style>
     body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-    canvas { border: 1px solid #ccc; margin-top: 20px; max-width: 90vw; max-height: 80vh; cursor: grab; }
+    canvas { border: 1px solid #ccc; margin-top: 20px; max-width: 90vw; max-height: 80vh; cursor: grab; touch-action: none; }
     .controls { margin-top: 20px; }
     .slider-container { margin-top: 15px; }
   </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
 <body>
   <h1>Paper Digitiser Tool</h1>
@@ -18,7 +19,8 @@
     <button onclick="increaseContrast()">Increase Contrast</button>
     <button onclick="rotateCanvas()">Rotate 90°</button>
     <button onclick="resetView()">Reset</button>
-    <button onclick="downloadImage()">Download</button>
+    <button onclick="downloadImage()">Download PNG</button>
+    <button onclick="downloadPDF()">Download PDF</button>
   </div>
   <div class="slider-container">
     <label for="fineRotate">Fine Rotate: </label>
@@ -37,19 +39,18 @@
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
 
-    // Offscreen buffer for performance
     const bufferCanvas = document.createElement('canvas');
     const bufferCtx = bufferCanvas.getContext('2d');
 
     let img = new Image();
-    let angle = 0; // base angle (90° increments)
-    let fineAngle = 0; // fine adjustment from slider
+    let angle = 0;
+    let fineAngle = 0;
     let scale = 1;
     let offsetX = 0;
     let offsetY = 0;
     let isDragging = false;
     let startX, startY;
-    let activeImage = null; // stores filtered image
+    let activeImage = null;
 
     const fineRotateInput = document.getElementById('fineRotate');
     const rotateValueLabel = document.getElementById('rotateValue');
@@ -158,7 +159,18 @@
       link.click();
     }
 
-    // Dragging with requestAnimationFrame
+    async function downloadPDF() {
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'pt',
+        format: [canvas.width, canvas.height]
+      });
+
+      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
+      pdf.save('digitised-paper.pdf');
+    }
+
     let needsRedraw = false;
     function requestRedraw() {
       if (!needsRedraw) {
@@ -170,6 +182,7 @@
       }
     }
 
+    // Mouse drag
     canvas.addEventListener('mousedown', e => {
       isDragging = true;
       startX = e.offsetX;
@@ -190,14 +203,38 @@
     canvas.addEventListener('mouseup', () => { isDragging = false; canvas.style.cursor = 'grab'; });
     canvas.addEventListener('mouseleave', () => { isDragging = false; canvas.style.cursor = 'grab'; });
 
-    // Fine rotation slider
+    // Touch drag (mobile)
+    canvas.addEventListener('touchstart', e => {
+      if (e.touches.length === 1) {
+        isDragging = true;
+        const rect = canvas.getBoundingClientRect();
+        startX = e.touches[0].clientX - rect.left;
+        startY = e.touches[0].clientY - rect.top;
+      }
+    });
+
+    canvas.addEventListener('touchmove', e => {
+      if (isDragging && e.touches.length === 1) {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const x = e.touches[0].clientX - rect.left;
+        const y = e.touches[0].clientY - rect.top;
+        offsetX += x - startX;
+        offsetY += y - startY;
+        startX = x;
+        startY = y;
+        requestRedraw();
+      }
+    });
+
+    canvas.addEventListener('touchend', () => { isDragging = false; });
+
     fineRotateInput.addEventListener('input', e => {
       fineAngle = parseFloat(e.target.value);
       rotateValueLabel.textContent = fineAngle + '°';
       drawImage();
     });
 
-    // Zoom slider for gradual zoom
     zoomSlider.addEventListener('input', e => {
       scale = parseFloat(e.target.value);
       zoomValueLabel.textContent = Math.round(scale * 100) + '%';
