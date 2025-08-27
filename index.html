@@ -7,6 +7,7 @@
     body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
     canvas { border: 1px solid #ccc; margin-top: 20px; max-width: 90vw; max-height: 80vh; cursor: grab; }
     .controls { margin-top: 20px; }
+    .slider-container { margin-top: 15px; }
   </style>
 </head>
 <body>
@@ -15,25 +16,45 @@
   <div class="controls">
     <button onclick="applyBW()">Black & White</button>
     <button onclick="increaseContrast()">Increase Contrast</button>
-    <button onclick="rotateCanvas()">Rotate</button>
-    <button onclick="zoomIn()">Zoom In</button>
-    <button onclick="zoomOut()">Zoom Out</button>
+    <button onclick="rotateCanvas()">Rotate 90°</button>
     <button onclick="resetView()">Reset</button>
     <button onclick="downloadImage()">Download</button>
+  </div>
+  <div class="slider-container">
+    <label for="fineRotate">Fine Rotate: </label>
+    <input type="range" id="fineRotate" min="-10" max="10" step="0.5" value="0">
+    <span id="rotateValue">0°</span>
+  </div>
+  <div class="slider-container">
+    <label for="zoomSlider">Zoom: </label>
+    <input type="range" id="zoomSlider" min="0.1" max="3" step="0.01" value="1">
+    <span id="zoomValue">100%</span>
   </div>
   <canvas id="canvas"></canvas>
 
   <script>
     const upload = document.getElementById('upload');
     const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const ctx = canvas.getContext('2d');
+
+    // Offscreen buffer for performance
+    const bufferCanvas = document.createElement('canvas');
+    const bufferCtx = bufferCanvas.getContext('2d');
+
     let img = new Image();
-    let angle = 0;
+    let angle = 0; // base angle (90° increments)
+    let fineAngle = 0; // fine adjustment from slider
     let scale = 1;
     let offsetX = 0;
     let offsetY = 0;
     let isDragging = false;
     let startX, startY;
+    let activeImage = null; // stores filtered image
+
+    const fineRotateInput = document.getElementById('fineRotate');
+    const rotateValueLabel = document.getElementById('rotateValue');
+    const zoomSlider = document.getElementById('zoomSlider');
+    const zoomValueLabel = document.getElementById('zoomValue');
 
     upload.addEventListener('change', e => {
       const file = e.target.files[0];
@@ -41,8 +62,15 @@
       const reader = new FileReader();
       reader.onload = evt => {
         img.onload = () => {
-          canvas.width = img.width;
-          canvas.height = img.height;
+          const maxDim = 2000;
+          let scaleFactor = Math.min(maxDim / img.width, maxDim / img.height, 1);
+          bufferCanvas.width = img.width * scaleFactor;
+          bufferCanvas.height = img.height * scaleFactor;
+          bufferCtx.drawImage(img, 0, 0, bufferCanvas.width, bufferCanvas.height);
+          activeImage = bufferCanvas;
+
+          canvas.width = bufferCanvas.width;
+          canvas.height = bufferCanvas.height;
           resetView();
         }
         img.src = evt.target.result;
@@ -55,26 +83,28 @@
       ctx.save();
       ctx.translate(canvas.width/2 + offsetX, canvas.height/2 + offsetY);
       ctx.scale(scale, scale);
-      ctx.rotate(angle * Math.PI / 180);
-      ctx.drawImage(img, -img.width/2, -img.height/2);
+      ctx.rotate((angle + fineAngle) * Math.PI / 180);
+      ctx.drawImage(activeImage, -activeImage.width/2, -activeImage.height/2);
       ctx.restore();
     }
 
     function applyBW() {
-      drawImage();
-      let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      bufferCtx.drawImage(img, 0, 0, bufferCanvas.width, bufferCanvas.height);
+      let imageData = bufferCtx.getImageData(0, 0, bufferCanvas.width, bufferCanvas.height);
       let data = imageData.data;
       for (let i = 0; i < data.length; i += 4) {
-        let avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+        let avg = (data[i] + data[i+1] + data[i+2]) / 3;
         let bw = avg > 128 ? 255 : 0;
-        data[i] = data[i + 1] = data[i + 2] = bw;
+        data[i] = data[i+1] = data[i+2] = bw;
       }
-      ctx.putImageData(imageData, 0, 0);
+      bufferCtx.putImageData(imageData, 0, 0);
+      activeImage = bufferCanvas;
+      drawImage();
     }
 
     function increaseContrast() {
-      drawImage();
-      let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      bufferCtx.drawImage(img, 0, 0, bufferCanvas.width, bufferCanvas.height);
+      let imageData = bufferCtx.getImageData(0, 0, bufferCanvas.width, bufferCanvas.height);
       let data = imageData.data;
       let factor = (259 * (128 + 255)) / (255 * (259 - 128));
       for (let i = 0; i < data.length; i += 4) {
@@ -82,7 +112,9 @@
         data[i+1] = truncate(factor * (data[i+1] - 128) + 128);
         data[i+2] = truncate(factor * (data[i+2] - 128) + 128);
       }
-      ctx.putImageData(imageData, 0, 0);
+      bufferCtx.putImageData(imageData, 0, 0);
+      activeImage = bufferCanvas;
+      drawImage();
     }
 
     function truncate(value) {
@@ -94,26 +126,20 @@
       drawImage();
     }
 
-    function zoomIn() {
-      scale *= 1.1;
-      drawImage();
-    }
-
-    function zoomOut() {
-      scale /= 1.1;
-      drawImage();
-    }
-
     function resetView() {
       angle = 0;
+      fineAngle = 0;
+      fineRotateInput.value = 0;
+      rotateValueLabel.textContent = "0°";
       scale = 1;
+      zoomSlider.value = 1;
+      zoomValueLabel.textContent = "100%";
       offsetX = 0;
       offsetY = 0;
       drawImage();
     }
 
     function downloadImage() {
-      // Create a temporary canvas that matches current view
       const tempCanvas = document.createElement('canvas');
       tempCanvas.width = canvas.width;
       tempCanvas.height = canvas.height;
@@ -122,8 +148,8 @@
       tempCtx.save();
       tempCtx.translate(canvas.width/2 + offsetX, canvas.height/2 + offsetY);
       tempCtx.scale(scale, scale);
-      tempCtx.rotate(angle * Math.PI / 180);
-      tempCtx.drawImage(img, -img.width/2, -img.height/2);
+      tempCtx.rotate((angle + fineAngle) * Math.PI / 180);
+      tempCtx.drawImage(activeImage, -activeImage.width/2, -activeImage.height/2);
       tempCtx.restore();
 
       const link = document.createElement('a');
@@ -132,7 +158,18 @@
       link.click();
     }
 
-    // Dragging to move the image
+    // Dragging with requestAnimationFrame
+    let needsRedraw = false;
+    function requestRedraw() {
+      if (!needsRedraw) {
+        needsRedraw = true;
+        requestAnimationFrame(() => {
+          drawImage();
+          needsRedraw = false;
+        });
+      }
+    }
+
     canvas.addEventListener('mousedown', e => {
       isDragging = true;
       startX = e.offsetX;
@@ -146,18 +183,25 @@
         offsetY += e.offsetY - startY;
         startX = e.offsetX;
         startY = e.offsetY;
-        drawImage();
+        requestRedraw();
       }
     });
 
-    canvas.addEventListener('mouseup', () => {
-      isDragging = false;
-      canvas.style.cursor = 'grab';
+    canvas.addEventListener('mouseup', () => { isDragging = false; canvas.style.cursor = 'grab'; });
+    canvas.addEventListener('mouseleave', () => { isDragging = false; canvas.style.cursor = 'grab'; });
+
+    // Fine rotation slider
+    fineRotateInput.addEventListener('input', e => {
+      fineAngle = parseFloat(e.target.value);
+      rotateValueLabel.textContent = fineAngle + '°';
+      drawImage();
     });
 
-    canvas.addEventListener('mouseleave', () => {
-      isDragging = false;
-      canvas.style.cursor = 'grab';
+    // Zoom slider for gradual zoom
+    zoomSlider.addEventListener('input', e => {
+      scale = parseFloat(e.target.value);
+      zoomValueLabel.textContent = Math.round(scale * 100) + '%';
+      drawImage();
     });
   </script>
 </body>
